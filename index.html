@@ -537,7 +537,7 @@ const CSV_URL = "https://docs.google.com/spreadsheets/d/1SWNqlxdOlad8-YvPEBWsiwb
 const CSV_URL_FALLBACK = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREgJqjUiHKEwufQI12S9TStYAzyZYcW1WK_eTW8JtQk8lGduZQKH2c8xQRSD_6_Q/pub?output=csv";
 const REFRESH_INTERVAL_MS = 3 * 60 * 1000; // 3 minuten
 const DATA_CACHE_KEY = "pocketdrop_data_v2";
-const IMG_CACHE_KEY = "pocketdrop_imgcache_v3";
+const IMG_CACHE_KEY = "pocketdrop_imgcache_v4";
 const MANUAL_CARDS_KEY = "pocketdrop_manual_cards_v1";
 const PIN_KEY = "pocketdrop_admin_pin_v1";
 const DEFAULT_PIN = "1234";
@@ -958,12 +958,19 @@ function detectPromoSet(set, number){
 async function fetchTcgdexByPromo(setId, localId, name){
   const params = new URLSearchParams();
   params.set("set.id", setId);
-  if (localId) params.set("localId", localId);
-  params.set("pagination:itemsPerPage", "5");
+  params.set("pagination:itemsPerPage", "250");
   const res = await fetch(`${TCGDEX_API}?${params.toString()}`);
   if (!res.ok) return [];
   const data = await res.json();
   let results = Array.isArray(data) ? data : [];
+
+  if (localId){
+    const normLocal = String(localId).replace(/^0+/, "").toLowerCase() || "0";
+    const localMatches = results.filter(r =>
+      (String(r.localId || "").replace(/^0+/, "").toLowerCase() || "0") === normLocal
+    );
+    if (localMatches.length) results = localMatches;
+  }
   if (results.length > 1 && name){
     const nameLower = name.toLowerCase();
     const match = results.find(r =>
