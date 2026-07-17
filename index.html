@@ -543,7 +543,7 @@ const PIN_KEY = "pocketdrop_admin_pin_v1";
 const DEFAULT_PIN = "1234";
 const TCGDEX_API = "https://api.tcgdex.net/v2/en/cards";
 const TCGDEX_SETS_API = "https://api.tcgdex.net/v2/en/sets";
-const SET_LOGO_CACHE_KEY = "pocketdrop_setlogocache_v2";
+const SET_LOGO_CACHE_KEY = "pocketdrop_setlogocache_v3";
 
 let csvCards = [];
 let manualCards = [];
@@ -999,6 +999,7 @@ async function resolveSetMeta(setName){
   const key = setName.toLowerCase();
   if (key in setLogoCache) return setLogoCache[key];
   try {
+    // Step 1: search by name to find the matching set's id + logo.
     const params = new URLSearchParams();
     params.set("name", setName);
     params.set("pagination:itemsPerPage", "5");
@@ -1010,10 +1011,20 @@ async function resolveSetMeta(setName){
       const exact = results.find(r => (r.name || "").toLowerCase() === key);
       if (exact) best = exact;
     }
-    const meta = {
-      logo: (best && best.logo) ? best.logo : null,
-      releaseDate: (best && best.releaseDate) ? best.releaseDate : null
-    };
+    if (!best || !best.id) throw new Error("no matching set");
+
+    // Step 2: the search/list endpoint doesn't include releaseDate —
+    // only the single-set detail endpoint does. Fetch that too.
+    let releaseDate = null;
+    try {
+      const detailRes = await fetch(`${TCGDEX_SETS_API}/${best.id}`);
+      if (detailRes.ok){
+        const detail = await detailRes.json();
+        releaseDate = detail.releaseDate || null;
+      }
+    } catch(e2){ /* keep releaseDate null, logo still usable */ }
+
+    const meta = { logo: best.logo || null, releaseDate };
     setLogoCache[key] = meta;
     saveSetLogoCache();
     return meta;
