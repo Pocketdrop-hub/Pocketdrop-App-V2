@@ -524,6 +524,29 @@
         <div class="admin-section-title">Handmatig toegevoegde kaarten</div>
         <div class="manual-list" id="manualList"></div>
         <div class="admin-note">Handmatig toegevoegde kaarten worden enkel lokaal op dit toestel bewaard — ze staan niet in het Google-document en verschijnen dus niet automatisch op andere tablets. Voeg de kaart daar ook toe als je ze overal wil tonen.</div>
+
+        <hr class="admin-divider">
+        <div class="admin-section-title">Foto handmatig instellen</div>
+        <form id="overrideForm">
+          <div class="field-row">
+            <div class="field"><label>Set</label><input id="oSet" list="setList" required></div>
+            <div class="field"><label>Nummer</label><input id="oNumber"></div>
+          </div>
+          <div class="field"><label>Kaartnaam</label><input id="oName" required></div>
+          <div class="field"><label>Afbeelding URL</label><input id="oUrl" type="url" placeholder="https://…"></div>
+          <div class="field">
+            <label>Of upload een foto vanaf dit toestel</label>
+            <input id="oFile" type="file" accept="image/*">
+          </div>
+          <div id="oPreviewWrap" style="display:none; margin-bottom:12px;">
+            <img id="oPreview" style="max-width:120px; max-height:160px; border-radius:8px; border:1.5px solid var(--card-line); display:block;">
+            <button type="button" id="oPreviewClear" class="btn-danger-sm" style="margin-top:6px;">Upload wissen</button>
+          </div>
+          <input type="hidden" id="oEditId">
+          <button type="submit" class="btn btn-primary" id="overrideSubmitBtn">Foto instellen</button>
+        </form>
+        <div class="manual-list" id="overrideList" style="margin-top:12px;"></div>
+        <div class="admin-note">Gebruik dit om zelf een foto te koppelen aan een kaart waarvoor de automatische opzoeking (TCGdex) geen afbeelding kan vinden — bv. bepaalde zeldzame promo's. Vul een link in óf upload rechtstreeks een foto. Ook dit blijft lokaal op dit toestel.</div>
       </div>
     </div>
   </div>
@@ -544,6 +567,7 @@ const DEFAULT_PIN = "1234";
 const TCGDEX_API = "https://api.tcgdex.net/v2/en/cards";
 const TCGDEX_SETS_API = "https://api.tcgdex.net/v2/en/sets";
 const SET_LOGO_CACHE_KEY = "pocketdrop_setlogocache_v3";
+const IMAGE_OVERRIDE_KEY = "pocketdrop_image_overrides_v1";
 
 let csvCards = [];
 let manualCards = [];
@@ -557,6 +581,8 @@ let imgCache = {};
 try { imgCache = JSON.parse(localStorage.getItem(IMG_CACHE_KEY) || "{}"); } catch(e){ imgCache = {}; }
 let setLogoCache = {};
 try { setLogoCache = JSON.parse(localStorage.getItem(SET_LOGO_CACHE_KEY) || "{}"); } catch(e){ setLogoCache = {}; }
+let imageOverrides = [];
+try { imageOverrides = JSON.parse(localStorage.getItem(IMAGE_OVERRIDE_KEY) || "[]"); } catch(e){ imageOverrides = []; }
 
 /* ==========================================================
    CSV PARSING (handles quoted fields containing commas)
@@ -985,6 +1011,8 @@ async function fetchTcgdexByPromo(setId, localId, name){
 
 async function resolveImage(name, set, number){
   const key = cacheKey(name, set, number);
+  const override = findOverride(key);
+  if (override) return override.url;
   if (key in imgCache) return imgCache[key];
   try {
     let results = [];
@@ -1001,10 +1029,13 @@ async function resolveImage(name, set, number){
     if (!results.length) results = await fetchTcgdex(name, set, null);
     if (!results.length) results = await fetchTcgdex(name, null, null);
 
-    let best = results[0] || null;
-    if (results.length > 1 && number){
+    const withImage = results.filter(r => r && r.image);
+    const candidates = withImage.length ? withImage : results;
+
+    let best = candidates[0] || null;
+    if (candidates.length > 1 && number){
       const normNumber = String(number).replace(/^0+/, "").toLowerCase();
-      const match = results.find(r => String(r.localId || "").replace(/^0+/, "").toLowerCase() === normNumber);
+      const match = candidates.find(r => String(r.localId || "").replace(/^0+/, "").toLowerCase() === normNumber);
       if (match) best = match;
     }
 
@@ -1160,12 +1191,14 @@ function openAdmin(){
 function closeAdmin(){
   document.getElementById("adminBackdrop").classList.remove("show");
   resetManualForm();
+  resetOverrideForm();
 }
 function showAdminContent(){
   document.getElementById("pinGate").style.display = "none";
   document.getElementById("adminContent").style.display = "";
   renderSetList();
   renderManualList();
+  renderOverrideList();
 }
 
 document.getElementById("adminBtn").addEventListener("click", openAdmin);
@@ -1274,6 +1307,162 @@ function fillFormForEdit(card){
   document.getElementById("mLowest").value = card.lowest ?? "";
   document.getElementById("manualSubmitBtn").textContent = "Wijzigingen opslaan";
   document.getElementById("mName").focus();
+}
+
+/* ==========================================================
+   ADMIN — manual image overrides
+   ========================================================== */
+function overrideKey(o){
+  return cacheKey(o.name, o.set, o.number);
+}
+
+function resizeImageFile(file, maxDim, quality){
+  maxDim = maxDim || 600;
+  quality = quality || 0.85;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim){
+          if (width >= height){
+            height = Math.round(height * (maxDim / width));
+            width = maxDim;
+          } else {
+            width = Math.round(width * (maxDim / height));
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = () => reject(new Error("Kon afbeelding niet lezen"));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error("Kon bestand niet lezen"));
+    reader.readAsDataURL(file);
+  });
+}
+
+let pendingUploadDataUrl = null;
+
+document.getElementById("oFile").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  try {
+    pendingUploadDataUrl = await resizeImageFile(file);
+    document.getElementById("oPreview").src = pendingUploadDataUrl;
+    document.getElementById("oPreviewWrap").style.display = "";
+    document.getElementById("oUrl").value = "";
+  } catch(err){
+    alert("Kon deze afbeelding niet verwerken. Probeer een ander bestand.");
+  }
+});
+document.getElementById("oPreviewClear").addEventListener("click", () => {
+  pendingUploadDataUrl = null;
+  document.getElementById("oFile").value = "";
+  document.getElementById("oPreviewWrap").style.display = "none";
+});
+
+function findOverride(key){
+  return imageOverrides.find(o => overrideKey(o) === key) || null;
+}
+function saveImageOverrides(){
+  try { localStorage.setItem(IMAGE_OVERRIDE_KEY, JSON.stringify(imageOverrides)); } catch(e){}
+}
+function resetOverrideForm(){
+  document.getElementById("overrideForm").reset();
+  document.getElementById("oEditId").value = "";
+  document.getElementById("overrideSubmitBtn").textContent = "Foto instellen";
+  pendingUploadDataUrl = null;
+  document.getElementById("oPreviewWrap").style.display = "none";
+}
+
+document.getElementById("overrideForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const editId = document.getElementById("oEditId").value;
+  const typedUrl = document.getElementById("oUrl").value.trim();
+  const entry = {
+    id: editId || ("o" + Date.now() + Math.random().toString(36).slice(2,7)),
+    set: document.getElementById("oSet").value.trim(),
+    number: document.getElementById("oNumber").value.trim(),
+    name: document.getElementById("oName").value.trim(),
+    url: pendingUploadDataUrl || typedUrl
+  };
+  if (!entry.name || !entry.url) return;
+
+  if (editId){
+    const idx = imageOverrides.findIndex(o => o.id === editId);
+    if (idx > -1) imageOverrides[idx] = entry;
+  } else {
+    imageOverrides.push(entry);
+  }
+  saveImageOverrides();
+  // Clear any cached (wrong) lookup for this exact card so the override takes effect immediately.
+  delete imgCache[overrideKey(entry)];
+  saveImgCache();
+  renderOverrideList();
+  resetOverrideForm();
+  if (currentView === "browse") render();
+});
+
+function renderOverrideList(){
+  const list = document.getElementById("overrideList");
+  if (!imageOverrides.length){
+    list.innerHTML = `<div class="manual-empty">Nog geen foto's handmatig ingesteld.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  imageOverrides.slice().reverse().forEach(entry => {
+    const row = document.createElement("div");
+    row.className = "manual-row";
+    row.innerHTML = `
+      <div style="display:flex; align-items:center; gap:10px;">
+        <img src="${entry.url}" alt="" style="width:32px; height:44px; object-fit:cover; border-radius:4px; border:1px solid var(--card-line); flex:none; background:var(--cream-alt);">
+        <div>
+          <div class="mr-name">${escapeHTML(entry.name)}</div>
+          <div class="mr-sub">${escapeHTML(entry.set)}${entry.number ? " · " + escapeHTML(entry.number) : ""}</div>
+        </div>
+      </div>
+      <div class="mr-actions">
+        <button class="btn-danger-sm" data-action="edit">Bewerken</button>
+        <button class="btn-danger-sm" data-action="delete">Verwijderen</button>
+      </div>
+    `;
+    row.querySelector('[data-action="edit"]').addEventListener("click", () => fillOverrideFormForEdit(entry));
+    row.querySelector('[data-action="delete"]').addEventListener("click", () => {
+      if (!confirm(`Foto-override voor "${entry.name}" verwijderen?`)) return;
+      imageOverrides = imageOverrides.filter(o => o.id !== entry.id);
+      saveImageOverrides();
+      renderOverrideList();
+      if (currentView === "browse") render();
+    });
+    list.appendChild(row);
+  });
+}
+
+function fillOverrideFormForEdit(entry){
+  document.getElementById("oEditId").value = entry.id;
+  document.getElementById("oSet").value = entry.set;
+  document.getElementById("oNumber").value = entry.number || "";
+  document.getElementById("oName").value = entry.name;
+  pendingUploadDataUrl = null;
+  document.getElementById("oFile").value = "";
+  if (entry.url && entry.url.startsWith("data:")){
+    pendingUploadDataUrl = entry.url;
+    document.getElementById("oUrl").value = "";
+    document.getElementById("oPreview").src = entry.url;
+    document.getElementById("oPreviewWrap").style.display = "";
+  } else {
+    document.getElementById("oUrl").value = entry.url || "";
+    document.getElementById("oPreviewWrap").style.display = "none";
+  }
+  document.getElementById("overrideSubmitBtn").textContent = "Wijzigingen opslaan";
+  document.getElementById("oName").focus();
 }
 
 /* ==========================================================
