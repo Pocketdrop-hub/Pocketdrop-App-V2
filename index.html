@@ -537,7 +537,7 @@ const CSV_URL = "https://docs.google.com/spreadsheets/d/1SWNqlxdOlad8-YvPEBWsiwb
 const CSV_URL_FALLBACK = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREgJqjUiHKEwufQI12S9TStYAzyZYcW1WK_eTW8JtQk8lGduZQKH2c8xQRSD_6_Q/pub?output=csv";
 const REFRESH_INTERVAL_MS = 3 * 60 * 1000; // 3 minuten
 const DATA_CACHE_KEY = "pocketdrop_data_v2";
-const IMG_CACHE_KEY = "pocketdrop_imgcache_v2";
+const IMG_CACHE_KEY = "pocketdrop_imgcache_v3";
 const MANUAL_CARDS_KEY = "pocketdrop_manual_cards_v1";
 const PIN_KEY = "pocketdrop_admin_pin_v1";
 const DEFAULT_PIN = "1234";
@@ -941,11 +941,49 @@ function cacheKey(name, set, number){
   return (set + "|" + number + "|" + name).toLowerCase();
 }
 
+const PROMO_SET_IDS = { MEP: "mep", SWSH: "swshp", SVP: "svp" };
+
+function detectPromoSet(set, number){
+  const numUpper = String(number || "").toUpperCase();
+  const setUpper = String(set || "").toUpperCase();
+  for (const code of Object.keys(PROMO_SET_IDS)){
+    if (numUpper.startsWith(code) || setUpper.includes(code)){
+      const digits = numUpper.replace(/^[A-Z]+/, "").replace(/^0+/, "");
+      return { setId: PROMO_SET_IDS[code], localId: digits || numUpper.replace(/\D/g, "") };
+    }
+  }
+  return null;
+}
+
+async function fetchTcgdexByPromo(setId, localId, name){
+  const params = new URLSearchParams();
+  params.set("set.id", setId);
+  if (localId) params.set("localId", localId);
+  params.set("pagination:itemsPerPage", "5");
+  const res = await fetch(`${TCGDEX_API}?${params.toString()}`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  let results = Array.isArray(data) ? data : [];
+  if (results.length > 1 && name){
+    const nameLower = name.toLowerCase();
+    const match = results.find(r =>
+      (r.name || "").toLowerCase().includes(nameLower) || nameLower.includes((r.name || "").toLowerCase())
+    );
+    if (match) results = [match];
+  }
+  return results;
+}
+
 async function resolveImage(name, set, number){
   const key = cacheKey(name, set, number);
   if (key in imgCache) return imgCache[key];
   try {
-    let results = await fetchTcgdex(name, set, number);
+    let results = [];
+    const promo = detectPromoSet(set, number);
+    if (promo){
+      results = await fetchTcgdexByPromo(promo.setId, promo.localId, name);
+    }
+    if (!results.length) results = await fetchTcgdex(name, set, number);
     if (!results.length) results = await fetchTcgdex(name, set, null);
     if (!results.length) results = await fetchTcgdex(name, null, null);
 
