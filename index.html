@@ -537,7 +537,7 @@ const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREgJqjUiHKEwuf
 const CSV_URL_FALLBACK = "https://docs.google.com/spreadsheets/d/1SWNqlxdOlad8-YvPEBWsiwbQ2Ukt0PJg/gviz/tq?tqx=out:csv&gid=264928788";
 const REFRESH_INTERVAL_MS = 3 * 60 * 1000; // 3 minuten
 const DATA_CACHE_KEY = "pocketdrop_data_v3";
-const IMG_CACHE_KEY = "pocketdrop_imgcache_v4";
+const IMG_CACHE_KEY = "pocketdrop_imgcache_v5";
 const MANUAL_CARDS_KEY = "pocketdrop_manual_cards_v1";
 const PIN_KEY = "pocketdrop_admin_pin_v1";
 const DEFAULT_PIN = "1234";
@@ -662,15 +662,17 @@ async function tryFetchCsv(url){
 
 async function fetchData(isBackground){
   if (!isBackground) setStatus("Verbinden…", false);
-  let cards, errorDetail = null;
+  let cards, errorDetail = null, sourceUsed = null;
   try {
     cards = await tryFetchCsv(CSV_URL);
+    sourceUsed = "A";
   } catch(err1){
     console.warn("Hoofdkoppeling mislukt, probeer alternatieve koppeling:", err1);
     errorDetail = (err1 && err1.message) ? err1.message : String(err1);
     try {
       cards = await tryFetchCsv(CSV_URL_FALLBACK);
       errorDetail = null;
+      sourceUsed = "B";
     } catch(err2){
       console.warn("Alternatieve koppeling ook mislukt:", err2);
       errorDetail = ((err1 && err1.message) || String(err1)) + " / " + ((err2 && err2.message) || String(err2));
@@ -681,7 +683,7 @@ async function fetchData(isBackground){
     csvCards = cards;
     combine();
     localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({ cards, savedAt: Date.now() }));
-    setStatus("Live · bijgewerkt " + new Date().toLocaleTimeString("nl-BE",{hour:'2-digit',minute:'2-digit'}), false);
+    setStatus("Live (bron " + sourceUsed + ") · bijgewerkt " + new Date().toLocaleTimeString("nl-BE",{hour:'2-digit',minute:'2-digit'}), false);
     renderApp();
   } else {
     lastError = errorDetail;
@@ -988,7 +990,12 @@ async function resolveImage(name, set, number){
     let results = [];
     const promo = detectPromoSet(set, number);
     if (promo){
-      results = await fetchTcgdexByPromo(promo.setId, promo.localId, name);
+      try {
+        results = await fetchTcgdexByPromo(promo.setId, promo.localId, name);
+      } catch(promoErr){
+        console.warn("Promo-opzoeking mislukt, val terug op gewone zoekmethode:", promoErr);
+        results = [];
+      }
     }
     if (!results.length) results = await fetchTcgdex(name, set, number);
     if (!results.length) results = await fetchTcgdex(name, set, null);
