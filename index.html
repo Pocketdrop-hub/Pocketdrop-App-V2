@@ -500,10 +500,18 @@
     <div id="adminContent" style="display:none;">
       <div class="modal-head" style="padding-bottom:6px;">
         <div class="modal-title-block">
-          <div class="modal-name" style="font-size:20px;">Kaart toevoegen</div>
+          <div class="modal-name" style="font-size:20px;">Beheer kaarten</div>
         </div>
       </div>
       <div class="admin-body">
+        <div class="admin-section-title">Bestaande kaart aanpassen</div>
+        <div class="field">
+          <input id="editSearchInput" type="text" placeholder="Zoek een kaart om aan te passen…" autocomplete="off">
+        </div>
+        <div class="manual-list" id="editSearchResults" style="margin-bottom:16px;"></div>
+
+        <hr class="admin-divider">
+        <div class="admin-section-title" id="manualFormTitle">Nieuwe kaart toevoegen</div>
         <form id="manualForm">
           <div class="field-row">
             <div class="field"><label>Set</label><input id="mSet" list="setList" required></div>
@@ -517,13 +525,20 @@
           </div>
           <div class="field"><label>Lowest (Cardmarket)</label><input id="mLowest" type="number" min="0" step="0.01"></div>
           <input type="hidden" id="mEditId">
+          <input type="hidden" id="mOverrideKey">
           <button type="submit" class="btn btn-primary" id="manualSubmitBtn">Kaart toevoegen</button>
+          <button type="button" class="btn btn-ghost" id="cancelEditBtn" style="width:100%; margin-top:8px; display:none;">Annuleren</button>
         </form>
 
         <hr class="admin-divider">
         <div class="admin-section-title">Handmatig toegevoegde kaarten</div>
         <div class="manual-list" id="manualList"></div>
         <div class="admin-note">Handmatig toegevoegde kaarten worden enkel lokaal op dit toestel bewaard — ze staan niet in het Google-document en verschijnen dus niet automatisch op andere tablets. Voeg de kaart daar ook toe als je ze overal wil tonen.</div>
+
+        <hr class="admin-divider">
+        <div class="admin-section-title">Aangepaste kaarten</div>
+        <div class="manual-list" id="editedList"></div>
+        <div class="admin-note">Aanpassingen aan kaarten uit het Google-document blijven enkel lokaal op dit toestel behouden — pas de sheet zelf ook aan als je een wijziging overal wil tonen.</div>
 
         <hr class="admin-divider">
         <div class="admin-section-title">Foto handmatig instellen</div>
@@ -568,6 +583,7 @@ const TCGDEX_API = "https://api.tcgdex.net/v2/en/cards";
 const TCGDEX_SETS_API = "https://api.tcgdex.net/v2/en/sets";
 const SET_LOGO_CACHE_KEY = "pocketdrop_setlogocache_v3";
 const IMAGE_OVERRIDE_KEY = "pocketdrop_image_overrides_v1";
+const CARD_OVERRIDE_KEY = "pocketdrop_card_overrides_v1";
 
 let csvCards = [];
 let manualCards = [];
@@ -583,6 +599,8 @@ let setLogoCache = {};
 try { setLogoCache = JSON.parse(localStorage.getItem(SET_LOGO_CACHE_KEY) || "{}"); } catch(e){ setLogoCache = {}; }
 let imageOverrides = [];
 try { imageOverrides = JSON.parse(localStorage.getItem(IMAGE_OVERRIDE_KEY) || "[]"); } catch(e){ imageOverrides = []; }
+let cardOverrides = [];
+try { cardOverrides = JSON.parse(localStorage.getItem(CARD_OVERRIDE_KEY) || "[]"); } catch(e){ cardOverrides = []; }
 
 /* ==========================================================
    CSV PARSING (handles quoted fields containing commas)
@@ -654,7 +672,13 @@ function setStatus(text, offline){
 }
 
 function combine(){
-  allCards = csvCards.concat(manualCards);
+  const patchedCsvCards = csvCards.map(c => {
+    const mk = cacheKey(c.name, c.set, c.number);
+    const ov = cardOverrides.find(o => o.matchKey === mk);
+    if (!ov) return c;
+    return { ...c, set: ov.set, number: ov.number, name: ov.name, qty: ov.qty, vkp: ov.vkp, lowest: ov.lowest, overridden: true, matchKey: mk };
+  });
+  allCards = patchedCsvCards.concat(manualCards);
 }
 
 function saveManualCards(){
@@ -1192,6 +1216,8 @@ function closeAdmin(){
   document.getElementById("adminBackdrop").classList.remove("show");
   resetManualForm();
   resetOverrideForm();
+  document.getElementById("editSearchInput").value = "";
+  document.getElementById("editSearchResults").innerHTML = "";
 }
 function showAdminContent(){
   document.getElementById("pinGate").style.display = "none";
@@ -1199,6 +1225,7 @@ function showAdminContent(){
   renderSetList();
   renderManualList();
   renderOverrideList();
+  renderEditedList();
 }
 
 document.getElementById("adminBtn").addEventListener("click", openAdmin);
@@ -1231,24 +1258,49 @@ function renderSetList(){
 function resetManualForm(){
   document.getElementById("manualForm").reset();
   document.getElementById("mEditId").value = "";
+  document.getElementById("mOverrideKey").value = "";
   document.getElementById("manualSubmitBtn").textContent = "Kaart toevoegen";
+  document.getElementById("manualFormTitle").textContent = "Nieuwe kaart toevoegen";
+  document.getElementById("cancelEditBtn").style.display = "none";
 }
+
+document.getElementById("cancelEditBtn").addEventListener("click", resetManualForm);
 
 document.getElementById("manualForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const editId = document.getElementById("mEditId").value;
-  const card = {
-    id: editId || ("m" + Date.now() + Math.random().toString(36).slice(2,7)),
-    manual: true,
+  const overrideKeyVal = document.getElementById("mOverrideKey").value;
+  const fields = {
     set: document.getElementById("mSet").value.trim() || "Onbekende set",
     number: document.getElementById("mNumber").value.trim(),
     name: document.getElementById("mName").value.trim(),
     qty: document.getElementById("mAantal").value === "" ? null : toNumber(document.getElementById("mAantal").value),
     vkp: document.getElementById("mVkp").value === "" ? null : toNumber(document.getElementById("mVkp").value),
-    lowest: document.getElementById("mLowest").value === "" ? null : toNumber(document.getElementById("mLowest").value),
-    imgKey: null
+    lowest: document.getElementById("mLowest").value === "" ? null : toNumber(document.getElementById("mLowest").value)
   };
-  if (!card.name){ return; }
+  if (!fields.name){ return; }
+
+  if (overrideKeyVal){
+    // Editing a card that comes from the Google Sheet: save as a local patch
+    // that gets re-applied on top of that sheet row every time it refreshes.
+    const entry = { matchKey: overrideKeyVal, ...fields };
+    const idx = cardOverrides.findIndex(o => o.matchKey === overrideKeyVal);
+    if (idx > -1) cardOverrides[idx] = entry; else cardOverrides.push(entry);
+    saveCardOverrides();
+    combine();
+    renderApp();
+    renderEditedList();
+    renderSetList();
+    resetManualForm();
+    return;
+  }
+
+  const card = {
+    id: editId || ("m" + Date.now() + Math.random().toString(36).slice(2,7)),
+    manual: true,
+    imgKey: null,
+    ...fields
+  };
 
   if (editId){
     const idx = manualCards.findIndex(c => c.id === editId);
@@ -1262,6 +1314,96 @@ document.getElementById("manualForm").addEventListener("submit", (e) => {
   renderManualList();
   renderSetList();
   resetManualForm();
+});
+
+function saveCardOverrides(){
+  try { localStorage.setItem(CARD_OVERRIDE_KEY, JSON.stringify(cardOverrides)); } catch(e){}
+}
+
+function renderEditedList(){
+  const list = document.getElementById("editedList");
+  if (!cardOverrides.length){
+    list.innerHTML = `<div class="manual-empty">Nog geen kaarten uit het document aangepast.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  cardOverrides.slice().reverse().forEach(entry => {
+    const row = document.createElement("div");
+    row.className = "manual-row";
+    row.innerHTML = `
+      <div>
+        <div class="mr-name">${escapeHTML(entry.name)}</div>
+        <div class="mr-sub">${escapeHTML(entry.set)}${entry.number ? " · " + escapeHTML(entry.number) : ""}</div>
+      </div>
+      <div class="mr-actions">
+        <button class="btn-danger-sm" data-action="edit">Bewerken</button>
+        <button class="btn-danger-sm" data-action="revert">Herstel origineel</button>
+      </div>
+    `;
+    row.querySelector('[data-action="edit"]').addEventListener("click", () => loadIntoEditForm(entry.matchKey));
+    row.querySelector('[data-action="revert"]').addEventListener("click", () => {
+      if (!confirm(`"${entry.name}" terugzetten naar de originele gegevens uit het document?`)) return;
+      cardOverrides = cardOverrides.filter(o => o.matchKey !== entry.matchKey);
+      saveCardOverrides();
+      combine();
+      renderApp();
+      renderEditedList();
+    });
+    list.appendChild(row);
+  });
+}
+
+/* ==========================================================
+   ADMIN — search & edit any existing card
+   ========================================================== */
+function loadIntoEditForm(matchKey){
+  const card = allCards.find(c => !c.manual && cacheKey(c.name, c.set, c.number) === matchKey);
+  if (!card) return;
+  document.getElementById("mEditId").value = "";
+  document.getElementById("mOverrideKey").value = matchKey;
+  document.getElementById("mSet").value = card.set;
+  document.getElementById("mNumber").value = card.number || "";
+  document.getElementById("mName").value = card.name;
+  document.getElementById("mAantal").value = card.qty ?? "";
+  document.getElementById("mVkp").value = card.vkp ?? "";
+  document.getElementById("mLowest").value = card.lowest ?? "";
+  document.getElementById("manualSubmitBtn").textContent = "Wijzigingen opslaan";
+  document.getElementById("manualFormTitle").textContent = "Kaart bewerken";
+  document.getElementById("cancelEditBtn").style.display = "";
+  document.getElementById("editSearchInput").value = "";
+  document.getElementById("editSearchResults").innerHTML = "";
+  document.getElementById("mName").scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+document.getElementById("editSearchInput").addEventListener("input", (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  const results = document.getElementById("editSearchResults");
+  if (!q){ results.innerHTML = ""; return; }
+  const matches = allCards
+    .filter(c => c.name.toLowerCase().includes(q) || c.set.toLowerCase().includes(q))
+    .slice(0, 8);
+  if (!matches.length){
+    results.innerHTML = `<div class="manual-empty">Geen kaarten gevonden.</div>`;
+    return;
+  }
+  results.innerHTML = "";
+  matches.forEach(card => {
+    const row = document.createElement("div");
+    row.className = "manual-row";
+    row.style.cursor = "pointer";
+    row.innerHTML = `
+      <div>
+        <div class="mr-name">${escapeHTML(card.name)}</div>
+        <div class="mr-sub">${escapeHTML(card.set)}${card.number ? " · " + escapeHTML(card.number) : ""}${card.manual ? " · handmatig" : ""}</div>
+      </div>
+      <div class="mr-actions"><button class="btn-danger-sm">Bewerken</button></div>
+    `;
+    row.addEventListener("click", () => {
+      if (card.manual) fillFormForEdit(card);
+      else loadIntoEditForm(cacheKey(card.name, card.set, card.number));
+    });
+    results.appendChild(row);
+  });
 });
 
 function renderManualList(){
@@ -1299,6 +1441,7 @@ function renderManualList(){
 
 function fillFormForEdit(card){
   document.getElementById("mEditId").value = card.id;
+  document.getElementById("mOverrideKey").value = "";
   document.getElementById("mSet").value = card.set;
   document.getElementById("mNumber").value = card.number || "";
   document.getElementById("mName").value = card.name;
@@ -1306,6 +1449,10 @@ function fillFormForEdit(card){
   document.getElementById("mVkp").value = card.vkp ?? "";
   document.getElementById("mLowest").value = card.lowest ?? "";
   document.getElementById("manualSubmitBtn").textContent = "Wijzigingen opslaan";
+  document.getElementById("manualFormTitle").textContent = "Kaart bewerken";
+  document.getElementById("cancelEditBtn").style.display = "";
+  document.getElementById("editSearchInput").value = "";
+  document.getElementById("editSearchResults").innerHTML = "";
   document.getElementById("mName").focus();
 }
 
