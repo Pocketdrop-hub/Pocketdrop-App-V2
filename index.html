@@ -493,7 +493,7 @@
 </main>
 
 <footer>
-  <span class="star">★</span> Pocketdrop — de magie van Pokémon-kaarten, op elke beurs. <span style="opacity:.6">v19</span>
+  <span class="star">★</span> Pocketdrop — de magie van Pokémon-kaarten, op elke beurs. <span style="opacity:.6">v20</span>
 </footer>
 
 <div class="modal-backdrop" id="modalBackdrop">
@@ -666,7 +666,6 @@
             <div class="field"><label>Grading</label><input id="iGrading" placeholder="PSA, BGS, CGC"></div>
             <div class="field"><label>Grade</label><input id="iGrade" placeholder="10"></div>
           </div>
-          <div class="field" id="iSealedRow" style="display:none;"><label>Type</label><input id="iKind" placeholder="Booster Box, ETB, Booster Bundle…"></div>
           <div class="field-row">
             <div class="field"><label>Aantal</label><input id="iQty" type="number" min="1" step="1" value="1"></div>
             <div class="field"><label>Verkoopprijs (€)</label><input id="iPriceNew" type="text" inputmode="decimal"></div>
@@ -679,9 +678,9 @@
 
         <hr class="admin-divider">
         <div class="admin-section-title">Sheet voorbereiden (eenmalig)</div>
-        <button type="button" class="btn btn-yellow" id="setupBtn">Kolom "Conditie" en tabbladen aanmaken</button>
+        <button type="button" class="btn btn-yellow" id="setupBtn">Sheet voorbereiden (Conditie, Slabs, Sealed)</button>
         <div class="sf-msg" id="setupMsg"></div>
-        <div class="admin-note">Voegt in Blad1 de kolom "Conditie" toe (standaard "Near Mint") en maakt de tabbladen "Slabs" en "Sealed" aan als ze nog niet bestaan.</div>
+        <div class="admin-note">Voegt in Blad1 de kolom "Conditie" toe (standaard "Near Mint"), maakt de tabbladen "Slabs" en "Sealed" aan als ze nog niet bestaan, en verwijdert de kolom "Type" uit Sealed.</div>
 
         <hr class="admin-divider">
         <div class="admin-section-title">Aankoop van klant registreren</div>
@@ -1229,11 +1228,12 @@ function render(){
   renderChips();
   const grid = document.getElementById("grid");
   const list = filteredSorted();
+  const itemHits = document.getElementById("searchInput").value.trim() ? collHits() : [];
   document.getElementById("resultCount").textContent =
-    list.length + (list.length === 1 ? " kaart" : " kaarten") + (document.getElementById("searchInput").value.trim() ? " (alle sets)" : (activeSet !== "Alle" ? " in " + activeSet : ""));
+    (list.length + itemHits.length) + ((list.length + itemHits.length) === 1 ? " resultaat" : " resultaten") + (document.getElementById("searchInput").value.trim() ? " (alle sets)" : (activeSet !== "Alle" ? " in " + activeSet : ""));
 
   grid.innerHTML = "";
-  if (!list.length){
+  if (!list.length && !itemHits.length){
     if (!allCards.length){
       grid.innerHTML = `<div class="empty-state">
         <div class="icon">📡</div>
@@ -1277,6 +1277,7 @@ function render(){
     grid.appendChild(tile);
     observer.observe(tile);
   });
+  itemHits.forEach(h => grid.appendChild(buildItemTile(h.name, h.item)));
 }
 
 function escapeHTML(s){
@@ -1806,10 +1807,10 @@ const COLL_DEFS = {
   },
   Sealed: {
     title: "Sealed", unit: "product", unitPl: "producten",
-    keys: ["product", "set", "type"],
+    keys: ["product", "set"],
     name: i => i.product || "", line: i => i.set || "",
-    tag: i => i.type || "",
-    details: [["Set", "set"], ["Type", "type"]],
+    tag: i => "",
+    details: [["Set", "set"]],
     icon: '<svg class="coll-icon" viewBox="0 0 100 100"><rect x="12" y="30" width="76" height="56" rx="6" fill="#7BCFF3" stroke="#0B67A7" stroke-width="3.5"/><path d="M12 42h76" stroke="#0B67A7" stroke-width="3"/><path d="M12 30l12-14h52l12 14z" fill="#FDDC00" stroke="#0B67A7" stroke-width="3.5" stroke-linejoin="round"/><circle cx="50" cy="64" r="11" fill="#fff" stroke="#0B67A7" stroke-width="3"/><path d="M39 64h22" stroke="#0B67A7" stroke-width="3"/></svg>'
   }
 };
@@ -1820,6 +1821,35 @@ let activeItem = null;
 
 function itemQty(i){ return toNumber(i.aantal); }
 function itemPrice(i){ return toNumber(i.verkoopprijs); }
+function collHits(){
+  const out = [];
+  Object.keys(COLL_DEFS).forEach(name => { collVisible(name, true).forEach(item => out.push({ name, item })); });
+  return out;
+}
+function buildItemTile(name, item){
+  const d = COLL_DEFS[name];
+  const q = itemQty(item);
+  const tile = document.createElement("div");
+  tile.className = "tile";
+  tile.innerHTML = `
+    <div class="foil"></div>
+    <div class="img-wrap">
+      ${placeholderSVG}
+      <img alt="${escapeHTML(d.name(item))}">
+      ${q !== null ? `<span class="stock-badge">×${q}</span>` : ``}
+    </div>
+    <div class="info">
+      <div class="set-line">${escapeHTML(d.title)}${d.line(item) ? " · " + escapeHTML(d.line(item)) : ""}</div>
+      <div class="name-line">${escapeHTML(d.name(item))}</div>
+      <div class="price-row">
+        <span class="price-tag">${fmtPrice(itemPrice(item))}</span>
+        <span class="num-tag">${escapeHTML(d.tag(item))}</span>
+      </div>
+    </div>`;
+  loadItemImage(name, item, tile.querySelector("img"), "low");
+  tile.addEventListener("click", () => openItem(name, item));
+  return tile;
+}
 function collVisible(name, applySearch){
   const q = applySearch ? $("searchInput").value.trim().toLowerCase().split(/\s+/).filter(Boolean) : [];
   return (collections[name] || []).filter(i => {
@@ -1853,8 +1883,9 @@ function renderCollectionTiles(grid){
     const n = collVisible(name, false).length;
     const tile = document.createElement("div");
     tile.className = "set-tile";
+    const lov = findSetLogoOverride(d.title);
     tile.innerHTML = `
-      <div class="logo-wrap">${d.icon}</div>
+      <div class="logo-wrap">${lov ? `<img src="${lov.url}" alt="${escapeHTML(d.title)}" class="loaded" style="max-height:90%;max-width:90%;object-fit:contain;opacity:1;">` : d.icon}</div>
       <div class="set-info">
         <div class="set-name">${escapeHTML(d.title)}</div>
         <div class="set-count">${n} ${n === 1 ? d.unit : d.unitPl}</div>
@@ -1882,29 +1913,7 @@ function renderColl(){
     grid.innerHTML = `<div class="empty-state"><div class="icon">🔎</div><h3>Niets gevonden</h3><p>Er zijn momenteel geen items in deze collectie.</p></div>`;
     return;
   }
-  list.forEach(item => {
-    const q = itemQty(item);
-    const tile = document.createElement("div");
-    tile.className = "tile";
-    tile.innerHTML = `
-      <div class="foil"></div>
-      <div class="img-wrap">
-        ${placeholderSVG}
-        <img alt="${escapeHTML(d.name(item))}">
-        ${q !== null ? `<span class="stock-badge">×${q}</span>` : ``}
-      </div>
-      <div class="info">
-        <div class="set-line">${escapeHTML(d.line(item))}</div>
-        <div class="name-line">${escapeHTML(d.name(item))}</div>
-        <div class="price-row">
-          <span class="price-tag">${fmtPrice(itemPrice(item))}</span>
-          <span class="num-tag">${escapeHTML(d.tag(item))}</span>
-        </div>
-      </div>`;
-    loadItemImage(name, item, tile.querySelector("img"), "low");
-    tile.addEventListener("click", () => openItem(name, item));
-    grid.appendChild(tile);
-  });
+  list.forEach(item => { grid.appendChild(buildItemTile(name, item)); });
 }
 $("collBackBtn").addEventListener("click", () => { $("searchInput").value = ""; goHome(); });
 
@@ -1976,7 +1985,6 @@ $("itSave").addEventListener("click", () => itemRun("itSave", async () => {
 function updateItemForm(){
   const slab = $("iType").value === "Slabs";
   $("iSlabRow").style.display = slab ? "" : "none";
-  $("iSealedRow").style.display = slab ? "none" : "";
   $("iNameLabel").textContent = slab ? "Kaartnaam" : "Productnaam";
 }
 $("iType").addEventListener("change", updateItemForm);
@@ -1991,13 +1999,13 @@ $("itemForm").addEventListener("submit", async (e) => {
   if (type === "Slabs"){
     Object.assign(values, { Card: $("iName").value.trim(), Number: $("iNumber").value.trim(), Grading: $("iGrading").value.trim(), Grade: $("iGrade").value.trim() });
   } else {
-    Object.assign(values, { Product: $("iName").value.trim(), Type: $("iKind").value.trim() });
+    Object.assign(values, { Product: $("iName").value.trim() });
   }
   try {
     const j = await apiCall({ action: "itemadd", sheet: type, values });
     m.className = "sf-msg ok";
     m.textContent = (j.action === "added" ? "Toegevoegd" : "Bestond al, aantal opgehoogd") + " ✓ Aantal: " + j.qty;
-    $("iName").value = ""; $("iNumber").value = ""; $("iGrade").value = ""; $("iKind").value = ""; $("iPriceNew").value = ""; $("iFoto").value = ""; $("iQty").value = 1;
+    $("iName").value = ""; $("iNumber").value = ""; $("iGrade").value = ""; $("iPriceNew").value = ""; $("iFoto").value = ""; $("iQty").value = 1;
     fetchCollections();
   } catch(err){ m.className = "sf-msg err"; m.textContent = err.message || String(err); }
 });
@@ -2005,9 +2013,9 @@ $("setupBtn").addEventListener("click", async () => {
   const m = $("setupMsg"); m.className = "sf-msg"; m.textContent = "Bezig…";
   try {
     const j = await apiCall({ action: "setup" });
-    if (j.action !== "setup") throw new Error("Het script is nog niet bijgewerkt naar versie 6.");
+    if (j.action !== "setup") throw new Error("Het script is nog niet bijgewerkt naar de nieuwste versie.");
     m.className = "sf-msg ok";
-    m.textContent = (j.addedColumn ? "Kolom Conditie toegevoegd. " : "Kolom Conditie bestond al. ") + j.filled + " kaarten ingevuld met Near Mint. " + (j.created.length ? "Tabbladen aangemaakt: " + j.created.join(", ") + "." : "Tabbladen Slabs en Sealed bestonden al.");
+    m.textContent = (j.addedColumn ? "Kolom Conditie toegevoegd. " : "Kolom Conditie bestond al. ") + j.filled + " kaarten ingevuld met Near Mint. " + (j.created.length ? "Tabbladen aangemaakt: " + j.created.join(", ") + "." : "Tabbladen Slabs en Sealed bestonden al.") + (j.removedType ? " Kolom Type verwijderd uit Sealed." : "");
     fetchData(false); fetchCollections();
   } catch(err){ m.className = "sf-msg err"; m.textContent = err.message || String(err); }
 });
@@ -2099,7 +2107,7 @@ function checkPin(){
 
 function renderSetList(){
   const dl = document.getElementById("setList");
-  dl.innerHTML = uniqueSets().filter(s => s !== "Alle").map(s => `<option value="${escapeHTML(s)}">`).join("");
+  dl.innerHTML = ["Slabs", "Sealed"].concat(uniqueSets().filter(s => s !== "Alle")).map(s => `<option value="${escapeHTML(s)}">`).join("");
 }
 
 function resetManualForm(){
