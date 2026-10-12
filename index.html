@@ -493,7 +493,7 @@
 </main>
 
 <footer>
-  <span class="star">★</span> Pocketdrop — de magie van Pokémon-kaarten, op elke beurs. <span style="opacity:.6">v20</span>
+  <span class="star">★</span> Pocketdrop — de magie van Pokémon-kaarten, op elke beurs. <span style="opacity:.6">v21</span>
 </footer>
 
 <div class="modal-backdrop" id="modalBackdrop">
@@ -1881,6 +1881,7 @@ function renderCollectionTiles(grid){
   Object.keys(COLL_DEFS).forEach(name => {
     const d = COLL_DEFS[name];
     const n = collVisible(name, false).length;
+    if (n === 0) return;
     const tile = document.createElement("div");
     tile.className = "set-tile";
     const lov = findSetLogoOverride(d.title);
